@@ -185,8 +185,13 @@ int main() {
         const Fn quad = [](double x, double y) { return x * x + 0.5 * x * y + 2.0 * y * y; };
         Lcg rng(777);
         std::vector<Vec3> pts;
-        for (int k = 0; k < 30; ++k)
-            pts.emplace_back(0.05 + 0.9 * rng.next(), 0.05 + 0.9 * rng.next(), 0.5);
+        for (int k = 0; k < 30; ++k) {
+            // Separate statements: argument evaluation order is unspecified, and
+            // compilers differ, which would swap x and y between platforms.
+            const double x = 0.05 + 0.9 * rng.next();
+            const double y = 0.05 + 0.9 * rng.next();
+            pts.emplace_back(x, y, 0.5);
+        }
         std::vector<double> err;
         for (int n : {8, 16, 32, 64}) {
             Mesh m = Mesh::makeChannel2D(n, n, 1.0, 1.0);

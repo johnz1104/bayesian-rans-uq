@@ -25,6 +25,13 @@ void *operator new[](std::size_t n) {
 void operator delete[](void *p) noexcept {
     ::operator delete(p);
 }
+// Sized forms, so every deallocation reaches the replacement above.
+void operator delete(void *p, std::size_t) noexcept {
+    ::operator delete(p);
+}
+void operator delete[](void *p, std::size_t) noexcept {
+    ::operator delete(p);
+}
 static void require(bool b) {
     if (!b)
         throw std::runtime_error("forward batch assertion failed");
