@@ -30,11 +30,12 @@ namespace {
         }                                                                                          \
     } while (0)
 
-const PatchBC &velBC(const FlowBoundaryConditions &bc, const Mesh &mesh, const std::string &name) {
+// The name is a C string so callers never bind it to a temporary std::string.
+const PatchBC &velBC(const FlowBoundaryConditions &bc, const Mesh &mesh, const char *name) {
     for (int p = 0; p < mesh.nPatches(); ++p)
         if (mesh.patch(p).name == name)
             return bc.velocityBC[p];
-    std::fprintf(stderr, "patch %s not found\n", name.c_str());
+    std::fprintf(stderr, "patch %s not found\n", name);
     std::exit(1);
 }
 
