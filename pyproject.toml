@@ -1,0 +1,39 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cfdr"
+version = "0.1.0"
+description = "Verification-first CFD simulation library"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.25"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.6", "mypy>=1.5"]
+distribution = ["build>=1", "scikit-build-core>=0.10", "pybind11>=2.13", "clang-format>=18,<19"]
+
+[tool.scikit-build]
+cmake.version = ">=3.21"
+cmake.build-type = "Release"
+wheel.packages = ["rans-uq/python/cfdr"]
+build.targets = ["_core"]
+
+[tool.scikit-build.cmake.define]
+CFDR_BUILD_PYTHON = "ON"
+BUILD_TESTING = "OFF"
+CFDR_PYTHON_INSTALL_DIRECTORY = "cfdr"
+
+[tool.pytest.ini_options]
+testpaths = ["rans-uq/python/tests", "tests/tools/tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["rans-uq/python/cfdr"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# The cfdr package lives under rans-uq/python/, so import sorting treats it as first-party.
+src = ["rans-uq/python"]

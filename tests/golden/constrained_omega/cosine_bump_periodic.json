@@ -1,0 +1,58 @@
+{
+  "case": "cosine_bump_periodic",
+  "code": {
+    "git_sha": "6f1c3a15248144821b880be12b1fe88a8d7fd7c2",
+    "dirty": true
+  },
+  "build": {
+    "compiler": "Apple LLVM 14.0.3 (clang-1403.0.22.14.1)",
+    "cxx_flags": "-Wall -Wextra -Wpedantic -Werror -O2 -DNDEBUG"
+  },
+  "nu": 0.00029999999999999997,
+  "mesh": {
+    "generator": "makeCurvedChannelPeriodic2D (cosine bump)",
+    "nx": 36,
+    "ny": 24,
+    "Lx": 4.5,
+    "yTop": 3,
+    "bump": 1
+  },
+  "settings": {
+    "max_iterations": 15000,
+    "convergence_tol": 0.0001,
+    "alpha_u": 0.40000000000000002,
+    "alpha_p": 0.25,
+    "alpha_k": 0.5,
+    "alpha_omega": 0.5,
+    "inner_iterations": 200,
+    "inner_tolerance": 0.001,
+    "turb_start_iter": 5,
+    "turb_update_interval": 1,
+    "legacy_rhie_chow_gate": false,
+    "body_force_x": 0.0040000000000000001,
+    "divergence_limit": 1000000
+  },
+  "result": {
+    "status": "max_iter",
+    "final_iter": 15000,
+    "stalled": false,
+    "final_worst_measure": 0.05064241320622475,
+    "contraction_rate_u": 0.99182608684834073,
+    "wall_seconds": 28.521961707999999,
+    "odd_even_ratio_p": 3.946617964569556e-06,
+    "field_norms": {
+    "sumsq_ux": 285.94662774059015,
+    "sumsq_uy": 0.76734298678281943,
+    "sumsq_p": 1.3745012109370847,
+    "sumsq_k": 0.035731136593984691,
+    "sumsq_omega": 796576700.19571352,
+    "sumsq_nut": 0.014622869153306151
+  }
+  },
+  "qoi": {
+    "bulk_velocity": 0.58439183706819708,
+    "x_separation": 0.26044529271352806,
+    "x_reattachment": 1.1258203911927276
+  },
+  "notes": "test_periodic_channel.cpp block 3; init U=(0.3,0,0)"
+}

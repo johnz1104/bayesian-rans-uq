@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+project(cfdr_cmake_consumer LANGUAGES CXX)
+find_package(cfdr 0.1 CONFIG REQUIRED)
+add_executable(cmake_consumer main.cpp)
+target_link_libraries(cmake_consumer PRIVATE cfdr::incompressible cfdr::dbns)
+enable_testing()
+add_test(NAME cmake_consumer COMMAND cmake_consumer)

@@ -1,0 +1,9 @@
+#pragma once
+namespace cfdr {
+inline constexpr const char* version = "@PROJECT_VERSION@";
+inline constexpr const char* sourceRevision = "@CFDR_SOURCE_REVISION@";
+inline constexpr const char* sourceDigest = "@CFDR_SOURCE_DIGEST@";
+inline constexpr const char* compiler = "@CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@";
+inline constexpr const char* compilerFlags = R"cfdr(@CFDR_BUILD_FLAGS@)cfdr";
+inline constexpr const char* buildType = "@CMAKE_BUILD_TYPE@";
+}

@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "repro",
+      "displayName": "Reproducible golden build",
+      "description": "Uses -O2 -DNDEBUG without fast-math for recording and comparing numerical references.",
+      "binaryDir": "${sourceDir}/build/repro",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -DNDEBUG"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Development (warnings)",
+      "description": "Same optimisation as repro with -Wall -Wextra -Wpedantic -Werror; maintained formatting and warning gates are mandatory.",
+      "binaryDir": "${sourceDir}/build/dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -DNDEBUG",
+        "CMAKE_CXX_FLAGS": "-Wall -Wextra -Wpedantic -Werror"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "repro",
+      "configurePreset": "repro",
+      "jobs": 2
+    },
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "jobs": 2
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "repro",
+      "configurePreset": "repro",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 2
+      }
+    },
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 2
+      }
+    }
+  ]
+}

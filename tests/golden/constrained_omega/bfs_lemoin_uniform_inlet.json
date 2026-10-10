@@ -1,0 +1,66 @@
+{
+  "case": "bfs_lemoin_uniform_inlet",
+  "code": {
+    "git_sha": "6f1c3a15248144821b880be12b1fe88a8d7fd7c2",
+    "dirty": true
+  },
+  "build": {
+    "compiler": "Apple LLVM 14.0.3 (clang-1403.0.22.14.1)",
+    "cxx_flags": "-Wall -Wextra -Wpedantic -Werror -O2 -DNDEBUG"
+  },
+  "nu": 0.00019607843137254901,
+  "mesh": {
+    "generator": "makeBackwardFacingStep2D",
+    "nx_up": 40,
+    "nx_down": 48,
+    "ny_up": 24,
+    "ny_down": 18,
+    "Lu": 10,
+    "Ld": 22,
+    "h": 1,
+    "H": 6,
+    "Re_mesh": 5100,
+    "yplus_target": 1
+  },
+  "settings": {
+    "max_iterations": 12000,
+    "convergence_tol": 0.0001,
+    "alpha_u": 0.29999999999999999,
+    "alpha_p": 0.20000000000000001,
+    "alpha_k": 0.40000000000000002,
+    "alpha_omega": 0.40000000000000002,
+    "inner_iterations": 300,
+    "inner_tolerance": 0.0001,
+    "turb_start_iter": 30,
+    "turb_update_interval": 2,
+    "legacy_rhie_chow_gate": false,
+    "body_force_x": 0,
+    "divergence_limit": 100000000
+  },
+  "result": {
+    "status": "converged",
+    "final_iter": 4060,
+    "stalled": false,
+    "final_worst_measure": 7.373624015851215e-05,
+    "contraction_rate_u": 0.99721103469841732,
+    "wall_seconds": 31.416163125000001,
+    "odd_even_ratio_p": 3.0135405648236161e-06,
+    "field_norms": {
+    "sumsq_ux": 2078.2907146430871,
+    "sumsq_uy": 1.8016973014506412,
+    "sumsq_p": 22.474988868441923,
+    "sumsq_k": 0.16654307725887266,
+    "sumsq_omega": 354518317193.2467,
+    "sumsq_nut": 0.57481819777628917
+  }
+  },
+  "qoi": {
+    "x_reattachment": 6.8930017862238362,
+    "tap_x": [1, 2, 4, 6, 8, 10, 15],
+    "cp_taps": [-0.29583874554719891, -0.306499927921351, -0.25481162289504794, -0.04962287543092124, 0.027546867123520339, 0.023545200502153668, 0.0055883964235223151],
+    "cf_taps": [0.00020228152409452243, 0.00034483133277691364, 0.0039110449599731398, 0.0018225223010954956, 0.0016851334905841611, 0.0028790767347042453, 0.0031150878691287125],
+    "profile_y_at_x4": [0.050000000000000003, 0.25, 0.5, 1, 2, 4],
+    "u_profile_x4": [-0.23298229770564341, -0.13239830546028575, 0.048369770405902741, 0.83256307016853726, 0.98753696798747936, 0.96562696702520723]
+  },
+  "notes": "bfs_baseline.py DEFAULT_CONFIG with inlet_delta=None (legacy uniform inlet, Tu 5%), slip top; _bfs_solver_settings"
+}

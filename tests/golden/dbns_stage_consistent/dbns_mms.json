@@ -1,0 +1,16 @@
+{
+  "case": "dbns_mms",
+  "code": {
+    "git_sha": "6f1c3a15248144821b880be12b1fe88a8d7fd7c2",
+    "dirty": true
+  },
+  "build": {
+    "compiler": "Apple LLVM 14.0.3 (clang-1403.0.22.14.1)",
+    "cxx_flags": "-Wall -Wextra -Wpedantic -Werror -O2 -DNDEBUG"
+  },
+  "rms_rho_error_order2_n16_32_64": [0.0030977092503213935, 0.00094129930778679035, 0.00026673011021413059],
+  "observed_order2_32_64": 1.8192728392089379,
+  "rms_rho_error_order1_n16_32": [0.0088215628878417929, 0.0039918569392352202],
+  "observed_order1_16_32": 1.1439742579725458,
+  "notes": "test_dbns_verification.cpp MMS (steady inviscid Euler); error is the UNWEIGHTED rms (the test weights by the stored cell volume)"
+}

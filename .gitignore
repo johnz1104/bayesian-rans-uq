@@ -1,0 +1,38 @@
+# Build
+build/
+_skbuild/
+*.so
+*.o
+*.a
+compile_commands.json
+CMakeUserPresets.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data: never commit third-party DNS data
+data/reference/
+*.h5
+*.hdf5
+
+# Run outputs and large artifacts
+runs/
+outputs/
+results/
+*.npz
+*.npy
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Local-only: the private internal repository and agent instructions
+internal/
+AGENTS.md
+CLAUDE.md
