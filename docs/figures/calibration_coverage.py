@@ -6,20 +6,23 @@ periodic channel used by the grid-convergence test in rans-uq/tests. Thirty poin
 across the channel are split into thirds: one third enters the likelihood, one third
 calibrates a split-conformal correction, and one third is held out to test the 90%
 ranges. The likelihood noise is the simulation's own statistical uncertainty of the mean.
-Because that noise is tiny, the likelihood is sharply peaked: a coarse uniform design
-locates its region, a pattern search finds the best fit, and the posterior is formed from
-uniform prior draws in a small box centered there, checked to hold the best draw inside.
+The prior is flat. Because the noise is tiny, the likelihood is sharply peaked: a coarse
+uniform design locates its region, a pattern search finds the best fit, and a quadratic fit
+of the log-likelihood on a grid around it gives a Gaussian (Laplace) approximation. The
+posterior is then formed by importance sampling from a Student-t proposal with that center
+and scale, weighted by likelihood over proposal density; a second, independent proposal
+sample checks that the result does not depend on the random draws.
 
 Download LM_Channel_0180_mean_prof.dat and LM_Channel_0180_mean_stdev.dat from
 https://turbulence.oden.utexas.edu (they are not distributed with this repository).
 The script writes the main plot (calibration_coverage_*.png), a supporting image
 (calibration_support_*.png) and the predictive-distribution figure
 (calibration_distributions_*.png, plus a PDF and SVG of the light version), each in a
-light and a dark version. That figure draws each point's exact predictive density, a
-mixture of the posterior draws blurred by the Gaussian measurement noise, and shows the
-split-conformal intervals as intervals, never as densities. The solves take about an
-hour on two threads; --cache keeps their results so the images can be redrawn without
-solving again. Requires cfdr, NumPy and matplotlib:
+light and a dark version. That figure draws each point's predictive density, approximated
+by the resampled posterior draws blurred by the Gaussian measurement noise, and shows the
+split-conformal intervals as intervals, never as densities. The 241 solves take about
+50 minutes on four threads (--workers 4); --cache keeps their results so the images can be
+redrawn without solving again. Requires cfdr, NumPy and matplotlib:
 
     python docs/figures/calibration_coverage.py LM_Channel_0180_mean_prof.dat \
         LM_Channel_0180_mean_stdev.dat docs/figures --cache calibration.json
@@ -28,6 +31,7 @@ solving again. Requires cfdr, NumPy and matplotlib:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 from pathlib import Path
@@ -44,9 +48,10 @@ RE_TAU = 182.088
 HALF_CELLS = 64
 SEED = 20261010
 ALPHA = 0.1
-WORKERS = 2
 STAGE1_BOX = ((0.28, 0.084), (0.34, 0.096))  # (a1, beta*) lower and upper corners
 SEARCH_STEP = (0.004, 0.001)  # first pattern-search step; halved three times
+PROPOSAL_DRAWS = 64  # importance-sampling draws in each of the two independent samples
+PROPOSAL_DOF = 4  # Student-t degrees of freedom: heavier tails than the Laplace Gaussian
 
 # Categorical slots 1-3 of the validated reference palette with its ink and chrome tokens.
 THEMES = {
@@ -108,15 +113,17 @@ def forward_batch(y: np.ndarray, truth: np.ndarray, sigma: np.ndarray) -> c.Forw
     )
 
 
-def evaluate(batch: c.ForwardBatch, samples: tuple[stats.Sample, ...]) -> stats.EvaluationSet:
-    evaluations = stats.evaluate_batch(samples, batch, workers=WORKERS)
+def evaluate(
+    batch: c.ForwardBatch, samples: tuple[stats.Sample, ...], workers: int
+) -> stats.EvaluationSet:
+    evaluations = stats.evaluate_batch(samples, batch, workers=workers)
     if evaluations.failure_count:
         raise RuntimeError(f"{evaluations.failure_count} solves failed; the posterior is undefined")
     return evaluations
 
 
 def pattern_search(
-    batch: c.ForwardBatch, start: tuple[float, ...], start_log_likelihood: float
+    batch: c.ForwardBatch, start: tuple[float, ...], start_log_likelihood: float, workers: int
 ) -> tuple[np.ndarray, np.ndarray, list]:
     """Move a 3x3 stencil to its best point; halve the step when the center wins (3 times)."""
     center, best, step = np.asarray(start), start_log_likelihood, np.asarray(SEARCH_STEP)
@@ -124,7 +131,7 @@ def pattern_search(
     while halvings < 3:
         offsets = [(i, j) for i in (-1, 0, 1) for j in (-1, 0, 1) if (i, j) != (0, 0)]
         rows = tuple(stats.Sample(k, tuple(center + step * o)) for k, o in enumerate(offsets))
-        winner = max(evaluate(batch, rows).records, key=lambda r: r.log_likelihood)
+        winner = max(evaluate(batch, rows, workers).records, key=lambda r: r.log_likelihood)
         if winner.log_likelihood > best:
             center, best = np.asarray(winner.theta), winner.log_likelihood
             path.append([*center, best])
@@ -133,8 +140,93 @@ def pattern_search(
     return center, step, path
 
 
-def calibrate(mean_file: Path, stdev_file: Path) -> dict:
-    """Run both design stages and every statistic the figure shows."""
+def laplace_fit(log_likelihood: np.ndarray, x: np.ndarray) -> dict:
+    """Least-squares quadratic in scaled coordinates x; its peak and curvature.
+
+    log L ~ c + g.x - x.C.x / 2, so the peak is C^-1 g and the Gaussian (Laplace)
+    covariance in x is C^-1. C must be positive definite.
+    """
+    design = np.column_stack(
+        [np.ones(len(x)), x[:, 0], x[:, 1], x[:, 0] ** 2, x[:, 0] * x[:, 1], x[:, 1] ** 2]
+    )
+    coef, *_ = np.linalg.lstsq(design, log_likelihood, rcond=None)
+    curvature = -np.array([[2 * coef[3], coef[4]], [coef[4], 2 * coef[5]]])
+    if np.any(np.linalg.eigvalsh(curvature) <= 0):
+        raise RuntimeError("the log-likelihood is not concave on the fitting grid")
+    residual = log_likelihood - design @ coef
+    return {
+        "peak": np.linalg.solve(curvature, coef[1:3]),
+        "covariance": np.linalg.inv(curvature),
+        "residual_rms": float(np.sqrt(np.mean(residual**2))),
+        "range": float(np.ptp(log_likelihood)),
+    }
+
+
+def student_t_draws(
+    center: np.ndarray, scale: np.ndarray, ids: range, seed: int
+) -> tuple[tuple[stats.Sample, ...], dict[int, float]]:
+    """Seeded multivariate Student-t draws and the log proposal density of each."""
+    nu, dim = PROPOSAL_DOF, len(center)
+    chol, precision = np.linalg.cholesky(scale), np.linalg.inv(scale)
+    constant = (math.lgamma((nu + dim) / 2) - math.lgamma(nu / 2)
+                - dim / 2 * math.log(nu * math.pi) - 0.5 * math.log(np.linalg.det(scale)))  # fmt: skip
+    samples, log_q = [], {}
+    for i in ids:
+        rng = stats.sample_rng(seed, i, "student-t-proposal")
+        z, chi2 = rng.standard_normal(dim), rng.chisquare(nu)
+        offset = chol @ z * math.sqrt(nu / chi2)
+        samples.append(stats.Sample(i, tuple(float(v) for v in center + offset)))
+        log_q[i] = constant - (nu + dim) / 2 * math.log1p(offset @ precision @ offset / nu)
+    return tuple(samples), log_q
+
+
+def importance_posterior(
+    batch: c.ForwardBatch, center: np.ndarray, scale: np.ndarray, ids: range, seed: int,
+    sigma: np.ndarray, workers: int,
+) -> dict:  # fmt: skip
+    """Importance sample from the Student-t proposal, resample 400 draws, predict."""
+    samples, log_q = student_t_draws(center, scale, ids, seed)
+    evaluations = evaluate(batch, samples, workers)
+    # posterior_weights assumes draws from the prior. Under the flat prior, a draw from
+    # the proposal q has weight L/q, so log q is subtracted from each log-likelihood.
+    ratio = stats.EvaluationSet(
+        tuple(dataclasses.replace(r, log_likelihood=r.log_likelihood - log_q[r.sample_id])
+              for r in evaluations.records)
+    )  # fmt: skip
+    weights = stats.posterior_weights(ratio)
+    theta = np.array([r.theta for r in ratio.records])
+    mean = weights @ theta
+    draws = stats.resample_posterior(ratio, range(1000, 1400), root_seed=seed + 1)
+    # Each draw repeats an evaluated coefficient vector; the solver is deterministic,
+    # so its predictions are reused instead of solved again.
+    by_theta = {r.theta: r for r in evaluations.records}
+    posterior = stats.EvaluationSet(
+        tuple(
+            stats.Evaluation(d.sample_id, d.theta, "Converged", by_theta[d.theta].predictions,
+                             by_theta[d.theta].log_likelihood, by_theta[d.theta].iterations,
+                             by_theta[d.theta].backend, "")
+            for d in draws
+        )
+    )  # fmt: skip
+    predictive = stats.predictive_summary(posterior, root_seed=seed + 2, observation_sigma=sigma)
+    samples_out = np.asarray(predictive.samples)
+    low, high = np.quantile(samples_out, [ALPHA / 2, 1 - ALPHA / 2], axis=0)
+    return {
+        "solves": len(evaluations.records),
+        "effective_sample_size": float(1 / np.sum(weights**2)),
+        "max_weight": float(weights.max()),
+        "distinct_draws": len({d.theta for d in draws}),
+        "theta_mean": mean.tolist(),
+        "theta_sd": np.sqrt(weights @ (theta - mean) ** 2).tolist(),
+        "posterior": posterior,
+        "predictive": predictive,
+        "low": low,
+        "high": high,
+    }
+
+
+def calibrate(mean_file: Path, stdev_file: Path, workers: int) -> dict:
+    """Run every design stage and every statistic the figures show."""
     mean = np.loadtxt(mean_file, comments="%")
     stdev = np.loadtxt(stdev_file, comments="%")
     if not np.allclose(mean[:, 1], stdev[:, 1]):
@@ -145,35 +237,30 @@ def calibrate(mean_file: Path, stdev_file: Path) -> dict:
     likelihood_sigma = np.where(group == 0, sigma, np.inf)
     batch = forward_batch(y_plus / RE_TAU, truth, likelihood_sigma)
 
+    # Stage 1 and the pattern search only locate the peak; they do not enter the posterior.
     lower, upper = STAGE1_BOX
     stage1 = evaluate(batch, stats.independent_uniform_design(range(24), lower, upper,
-                                                              root_seed=SEED))  # fmt: skip
+                                                              root_seed=SEED), workers)  # fmt: skip
     first = max(stage1.records, key=lambda r: r.log_likelihood)
-    optimum, step, path = pattern_search(batch, first.theta, first.log_likelihood)
-    lower2, upper2 = tuple(optimum - 2 * step), tuple(optimum + 2 * step)
-    stage2 = evaluate(batch, stats.independent_uniform_design(range(100, 148), lower2, upper2,
-                                                              root_seed=SEED + 1))  # fmt: skip
+    optimum, step, path = pattern_search(batch, first.theta, first.log_likelihood, workers)
 
-    weights = stats.posterior_weights(stage2)
-    theta = np.array([r.theta for r in stage2.records])
-    span = np.asarray(upper2) - np.asarray(lower2)
-    top_draw = theta[int(np.argmax(weights))]
-    top_on_edge = bool(np.any((top_draw - lower2 < 0.1 * span) | (upper2 - top_draw < 0.1 * span)))
-    draws = stats.resample_posterior(stage2, range(1000, 1400), root_seed=SEED + 2)
-    # Each draw repeats an evaluated coefficient vector; the solver is deterministic,
-    # so its predictions are reused instead of solved again.
-    by_theta = {r.theta: r for r in stage2.records}
-    posterior = stats.EvaluationSet(
-        tuple(
-            stats.Evaluation(d.sample_id, d.theta, "Converged", by_theta[d.theta].predictions,
-                             by_theta[d.theta].log_likelihood, by_theta[d.theta].iterations,
-                             by_theta[d.theta].backend, "")
-            for d in draws
-        )
-    )  # fmt: skip
-    predictive = stats.predictive_summary(posterior, root_seed=SEED + 3, observation_sigma=sigma)
+    # Laplace approximation from a 5x5 grid over the optimum +/- 2 final steps.
+    offsets = np.array([(i, j) for i in range(-2, 3) for j in range(-2, 3)], dtype=float)
+    grid = evaluate(batch, tuple(stats.Sample(200 + k, tuple(optimum + step * o))
+                                 for k, o in enumerate(offsets)), workers)  # fmt: skip
+    scaled = np.array([(np.asarray(r.theta) - optimum) / step for r in grid.records])
+    fit = laplace_fit(np.array([r.log_likelihood for r in grid.records]), scaled)
+    center = optimum + step * fit["peak"]
+    scale = np.diag(step) @ fit["covariance"] @ np.diag(step)
+    if np.any(np.abs(fit["peak"]) > 2):
+        raise RuntimeError("the fitted peak lies outside the fitting grid")
+
+    main = importance_posterior(batch, center, scale, range(300, 300 + PROPOSAL_DRAWS),
+                                SEED + 1, sigma, workers)  # fmt: skip
+    replicate = importance_posterior(batch, center, scale, range(400, 400 + PROPOSAL_DRAWS),
+                                     SEED + 11, sigma, workers)  # fmt: skip
+    predictive, low, high = main["predictive"], main["low"], main["high"]
     samples = np.asarray(predictive.samples)
-    low, high = np.quantile(samples, [ALPHA / 2, 1 - ALPHA / 2], axis=0)
     prediction = np.asarray(predictive.latent_mean)
 
     # Split conformal on the log scale, so the correction is a relative one.
@@ -181,6 +268,7 @@ def calibrate(mean_file: Path, stdev_file: Path) -> dict:
     log_lo, log_hi = stats.split_conformal_intervals(
         np.log(truth[cal]), np.log(prediction[cal]), np.log(prediction), alpha=ALPHA
     )
+    summary = ("effective_sample_size", "max_weight", "distinct_draws", "theta_mean", "theta_sd")
     return {
         "y_plus": y_plus.tolist(), "truth": truth.tolist(), "sigma": sigma.tolist(),
         "group": group.tolist(), "prediction": prediction.tolist(),
@@ -192,19 +280,29 @@ def calibrate(mean_file: Path, stdev_file: Path) -> dict:
         "recalibrated_covered": int(np.sum((truth >= np.exp(log_lo)) & (truth <= np.exp(log_hi))
                                            & test)),
         "held_out": int(test.sum()),
-        "effective_sample_size": float(1 / np.sum(weights**2)),
-        "max_weight_draw_on_box_edge": top_on_edge,
+        **{key: main[key] for key in summary},
+        "replicate": {
+            **{key: replicate[key] for key in summary},
+            "prediction": list(replicate["predictive"].latent_mean),
+            "standard_low": replicate["low"].tolist(),
+            "standard_high": replicate["high"].tolist(),
+            "standard_covered": int(np.sum((truth >= replicate["low"])
+                                           & (truth <= replicate["high"]) & test)),
+        },
+        "laplace": {"center": center.tolist(), "sd": np.sqrt(np.diag(scale)).tolist(),
+                    "correlation": float(scale[0, 1] / np.sqrt(scale[0, 0] * scale[1, 1])),
+                    "fit_residual_rms": fit["residual_rms"], "fit_range": fit["range"],
+                    "grid_box": [list(optimum - 2 * step), list(optimum + 2 * step)]},
         "search_path": path,
-        "stage1_box": [list(lower), list(upper)], "stage2_box": [list(lower2), list(upper2)],
-        "posterior_mean_theta": (weights @ theta).tolist(),
-        "max_weight_theta": list(theta[int(np.argmax(weights))]),
-        "solves": len(stage1.records) + 8 * (len(path) - 1 + 3) + len(stage2.records),
+        "stage1_box": [list(lower), list(upper)],
+        "solves": (len(stage1.records) + 8 * (len(path) - 1 + 3) + len(grid.records)
+                   + main["solves"] + replicate["solves"]),
         "dns_profile": mean[(mean[:, 1] >= 0.5) & (mean[:, 1] < RE_TAU)][:, 1:3].tolist(),
         "center_speed": float(mean[np.argmax(mean[:, 1]), 2]),
         # The predictive distribution itself: each posterior draw's noise-free prediction
         # (blurred by Gaussian measurement noise of standard deviation sigma) and the noisy
         # predictive samples whose quantiles give the standard 90% ranges.
-        "posterior_latent": [list(record.predictions) for record in posterior.records],
+        "posterior_latent": [list(record.predictions) for record in main["posterior"].records],
         "predictive_samples": samples.tolist(),
     }  # fmt: skip
 
@@ -390,7 +488,7 @@ def render_support(r: dict, theme: str, output: Path) -> None:
 
 
 def predictive_density(r: dict, i: int, values: np.ndarray) -> np.ndarray:
-    """Exact predictive density at point i: posterior draws blurred by Gaussian noise."""
+    """Predictive density at point i: resampled posterior draws blurred by Gaussian noise."""
     latent = np.asarray(r["posterior_latent"])[:, i]
     sigma = np.asarray(r["sigma"])[i]
     z = (values[:, None] - latent[None, :]) / sigma
@@ -544,12 +642,15 @@ def main() -> None:
     parser.add_argument("stdev", type=Path, help="LM_Channel_0180_mean_stdev.dat")
     parser.add_argument("output_dir", type=Path, help="directory for the two images")
     parser.add_argument("--cache", type=Path, help="JSON file that stores or reuses the solves")
+    parser.add_argument(
+        "--workers", type=int, default=2, help="solver threads; results do not depend on it"
+    )
     args = parser.parse_args()
 
     if args.cache and args.cache.exists():
         result = json.loads(args.cache.read_text())
     else:
-        result = calibrate(args.mean, args.stdev)
+        result = calibrate(args.mean, args.stdev, args.workers)
         if args.cache:
             args.cache.write_text(json.dumps(result, indent=1))
     for theme in THEMES:
@@ -562,10 +663,13 @@ def main() -> None:
                             args.output_dir / "calibration_distributions.svg"]  # fmt: skip
             render_distributions(result, theme, outputs)
 
-    keys = ("solves", "effective_sample_size", "max_weight_draw_on_box_edge", "standard_covered",
-            "recalibrated_covered", "held_out", "posterior_mean_theta", "stage2_box")  # fmt: skip
+    keys = ("solves", "effective_sample_size", "max_weight", "distinct_draws", "theta_mean",
+            "theta_sd", "standard_covered", "recalibrated_covered", "held_out")  # fmt: skip
     for key in keys:
         print(f"{key}: {result[key]}")
+    print("replicate:", {k: v for k, v in result["replicate"].items() if not isinstance(v, list)
+                         or k.startswith("theta")})  # fmt: skip
+    print("laplace:", result["laplace"])
     truth, test = np.asarray(result["truth"]), np.asarray(result["group"]) == 2
     share = 100 * np.asarray(result["y_plus"]) / RE_TAU
     print("share | truth U+ | standard 90% range | recalibrated 90% range | coefficient var share")
